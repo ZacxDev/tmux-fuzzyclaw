@@ -1,0 +1,12 @@
+{
+    "task": "auth-implementation",
+    "window_id": "@42",
+    "tmux_session": "main",
+    "window_index": 5,
+    "status": "paused",
+    "cwd": "/home/zach/workspace/project",
+    "claude_session": "abc123def456",
+    "started": "2026-03-24T10:30:45-05:00",
+    "last_activity": "2026-03-24T11:15:32-05:00",
+    "summary": "Updated authentication middleware to support JWT tokens with refresh capability"
+}

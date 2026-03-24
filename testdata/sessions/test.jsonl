@@ -1,0 +1,7 @@
+{"type":"user","userType":"external","message":{"content":"implement authentication system"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll create an authentication system with JWT tokens. Let me start by setting up the middleware."}]}}
+{"type":"user","userType":"external","message":{"content":"add refresh token support"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll add refresh token support to the authentication system. This will include a new endpoint and token rotation logic."}]}}
+{"type":"user","userType":"internal","message":{"content":"system prompt here"}}
+{"type":"user","userType":"external","message":{"content":"fix the token expiration bug"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Found the bug - the expiration was being set in seconds instead of milliseconds. Here's the fix."}]}}

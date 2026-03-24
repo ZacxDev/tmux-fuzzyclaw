@@ -1,0 +1,29 @@
+state_dir: /tmp/test-tasks
+activity_dir: /tmp/test-activity
+claude_projects_dir: /tmp/test-claude
+
+dashboard:
+  sort_by: name
+  sort_ascending: false
+  show_sections: true
+  refresh_interval: 5s
+  columns: [status, name, dir, idle]
+  preview:
+    position: right
+    width: 50
+    syntax_highlight: false
+
+theme:
+  name: custom
+  idle_colors:
+    - { max_minutes: 5, color: "#00ff00" }
+    - { max_minutes: 60, color: "#ffff00" }
+    - { max_minutes: 99999, color: "#ff0000" }
+
+keys:
+  quit: [q, ctrl+c]
+  switch: [enter]
+
+tokens:
+  input_cost: 5.00
+  output_cost: 20.00

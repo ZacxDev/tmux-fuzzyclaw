@@ -1,0 +1,3 @@
+dashboard:
+  sort_by: name
+  refresh_interval: 5s
