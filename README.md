@@ -4,7 +4,7 @@ Fuzzy tmux session dashboard for [Claude Code](https://docs.anthropic.com/en/doc
 
 ## Features
 
-- **Task dashboard** (Alt+c) — fzf popup listing all tmux windows with task name, directory, idle time, and AI session summary
+- **Session dashboard** (Alt+c) — fzf popup listing all tmux windows with task name, directory, idle time, and AI session summary
 - **Conversation search** — type to fuzzy-match against full Claude conversation history; preview pane shows matching lines with context
 - **Session lifecycle** — automatic status emoji: `●` (claude running) → `⏸` (paused) → `🔄` (resumed)
 - **Stale detection** — windows color-coded by idle time (8-color Gruvbox scale from green to gray)
