@@ -1,6 +1,6 @@
 # tmux-fuzzyclaw
 
-Fuzzy tmux task dashboard for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Track, search, and switch between AI coding sessions across all tmux windows.
+Fuzzy tmux session dashboard for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Track, search, and switch between AI coding sessions across all tmux windows.
 
 ## Features
 
