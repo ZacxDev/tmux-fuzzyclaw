@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -58,7 +59,7 @@ func CwdContains(claudeProjectsDir, cwd, query string) bool {
 		return false
 	}
 	pdir := ProjectDir(claudeProjectsDir, cwd)
-	cmd := exec.Command("rg", "-i", "-l", "--max-count=1", "--glob=*.jsonl", query, pdir)
+	cmd := exec.Command("rg", "-i", "-F", "-l", "--max-count=1", "--glob=*.jsonl", query, pdir)
 	if err := cmd.Run(); err == nil {
 		return true
 	}
@@ -78,17 +79,25 @@ func BatchCwdSearch(claudeProjectsDir, query string, cwds []string) map[string]b
 	dirToCwd := make(map[string]string)
 	for _, cwd := range cwds {
 		pdir := ProjectDir(claudeProjectsDir, cwd)
+		// Skip non-existent dirs — a single missing dir causes rg exit code 2,
+		// which discards ALL results including valid matches from other dirs.
+		if _, err := os.Stat(pdir); err != nil {
+			continue
+		}
 		dirToCwd[pdir] = cwd
 		dirs = append(dirs, pdir)
 	}
+	if len(dirs) == 0 {
+		return result
+	}
 
 	// Single rg call across all dirs: returns matching file paths
-	args := []string{"-i", "-l", "--max-count=1", "--glob=*.jsonl", query}
+	args := []string{"-i", "-F", "-l", "--max-count=1", "--glob=*.jsonl", query}
 	args = append(args, dirs...)
 	cmd := exec.Command("rg", args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return result // no matches or rg error
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return result // no matches
 	}
 
 	// Map matching file paths back to cwds

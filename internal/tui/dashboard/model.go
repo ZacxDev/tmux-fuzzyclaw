@@ -116,6 +116,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deepMatches = msg.matches
 			m.deepQuery = msg.query
 			m.applyFilter()
+			if cmd := m.loadPreview(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case tui.ErrorMsg:
