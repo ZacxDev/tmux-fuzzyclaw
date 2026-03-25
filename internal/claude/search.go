@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"os/exec"
 	"strings"
 )
 
@@ -51,32 +52,18 @@ func SearchConversation(path, query string) ([]SearchResult, error) {
 }
 
 // CwdContains checks if any JSONL session for a cwd contains the query string.
-// Searches all sessions, not just the latest. Returns on first match.
+// Uses ripgrep for speed, falling back to Go if rg is not available.
 func CwdContains(claudeProjectsDir, cwd, query string) bool {
 	if query == "" {
 		return false
 	}
-	files, err := AllSessionFiles(claudeProjectsDir, cwd)
-	if err != nil {
-		return false
+	pdir := ProjectDir(claudeProjectsDir, cwd)
+	// Use ripgrep: case-insensitive, just check for any match, limit to 1
+	cmd := exec.Command("rg", "-i", "-l", "--max-count=1", "--glob=*.jsonl", query, pdir)
+	if err := cmd.Run(); err == nil {
+		return true // exit 0 = match found
 	}
-	queryLower := strings.ToLower(query)
-	for _, f := range files {
-		messages, err := ParseJSONL(f)
-		if err != nil {
-			continue
-		}
-		for _, m := range messages {
-			if m.Type != TypeUser && m.Type != TypeAssistant {
-				continue
-			}
-			text := m.ExtractText()
-			if text != "" && strings.Contains(strings.ToLower(text), queryLower) {
-				return true
-			}
-		}
-	}
-	return false
+	return false // exit 1 = no match (or rg not found)
 }
 
 func extractContext(text, query string, contextLen int) string {

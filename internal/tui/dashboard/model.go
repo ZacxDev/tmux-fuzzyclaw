@@ -33,6 +33,10 @@ type Model struct {
 	searchQuery string
 	searching   bool
 
+	// Deep search
+	deepMatches    []int  // indices matched by async JSONL scan
+	deepQuery      string // query that produced deepMatches
+
 	// Preview
 	previewPrompts []string
 	previewSummary string
@@ -107,6 +111,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tui.FileChangedMsg:
 		cmds = append(cmds, fetchWindows(m.cfg))
 
+	case deepSearchResultMsg:
+		if msg.query == m.searchQuery {
+			m.deepMatches = msg.matches
+			m.deepQuery = msg.query
+			m.applyFilter()
+		}
+
 	case tui.ErrorMsg:
 		m.err = msg.Err
 
@@ -127,7 +138,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newQuery := m.searchInput.Value()
 		if newQuery != m.searchQuery {
 			m.searchQuery = newQuery
+			// Clear stale deep results if query changed
+			if m.deepQuery != newQuery {
+				m.deepMatches = nil
+			}
 			m.applyFilter()
+			// Kick off async deep search via ripgrep
+			if cmd := m.deepSearch(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			if cmd := m.loadPreview(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -227,6 +246,8 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 		m.searchQuery = ""
 		m.searchInput.SetValue("")
 		m.searchResults = nil
+		m.deepMatches = nil
+		m.deepQuery = ""
 		m.applyFilter()
 
 	case "enter":
@@ -275,7 +296,13 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 		newQuery := m.searchInput.Value()
 		if newQuery != m.searchQuery {
 			m.searchQuery = newQuery
+			if m.deepQuery != newQuery {
+				m.deepMatches = nil
+			}
 			m.applyFilter()
+			if cmd := m.deepSearch(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			if cmd := m.loadPreview(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -379,13 +406,9 @@ func (m *Model) applyFilter() {
 		})
 		m.filtered = indices
 	} else {
-		// Case-insensitive substring match against visible fields + cached keywords,
-		// then fall back to full JSONL search across all sessions per cwd.
+		// Fast: substring match against cached fields only
 		queryLower := strings.ToLower(m.searchQuery)
-		cwdSearched := make(map[string]bool)  // cwd -> matched via JSONL?
-		cwdChecked := make(map[string]bool)   // cwd -> already checked JSONL?
 		for i, e := range m.entries {
-			// Fast path: match against cached fields
 			searchable := strings.ToLower(strings.Join([]string{
 				e.CleanName(),
 				e.Window.Dir,
@@ -395,25 +418,56 @@ func (m *Model) applyFilter() {
 			}, " "))
 			if strings.Contains(searchable, queryLower) {
 				m.filtered = append(m.filtered, i)
-				continue
 			}
-			// Slow path: search all JSONL files for this cwd (once per cwd)
-			cwd := e.Window.FullCwd
-			if cwd == "" {
-				continue
-			}
-			if !cwdChecked[cwd] {
-				cwdChecked[cwd] = true
-				cwdSearched[cwd] = claude.CwdContains(m.cfg.ClaudeProjectDir, cwd, m.searchQuery)
-			}
-			if cwdSearched[cwd] {
-				m.filtered = append(m.filtered, i)
+		}
+		// Also include any entries from a prior deep search
+		for _, idx := range m.deepMatches {
+			if !m.inFiltered(idx) {
+				m.filtered = append(m.filtered, idx)
 			}
 		}
 	}
 
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(0, len(m.filtered)-1)
+	}
+}
+
+func (m *Model) inFiltered(idx int) bool {
+	for _, f := range m.filtered {
+		if f == idx {
+			return true
+		}
+	}
+	return false
+}
+
+// deepSearch launches an async ripgrep scan across all JSONL files per cwd.
+func (m *Model) deepSearch() tea.Cmd {
+	query := m.searchQuery
+	if query == "" {
+		return nil
+	}
+	entries := m.entries
+	cfg := m.cfg
+	return func() tea.Msg {
+		cwdChecked := make(map[string]bool)
+		cwdMatched := make(map[string]bool)
+		var matches []int
+		for i, e := range entries {
+			cwd := e.Window.FullCwd
+			if cwd == "" {
+				continue
+			}
+			if !cwdChecked[cwd] {
+				cwdChecked[cwd] = true
+				cwdMatched[cwd] = claude.CwdContains(cfg.ClaudeProjectDir, cwd, query)
+			}
+			if cwdMatched[cwd] {
+				matches = append(matches, i)
+			}
+		}
+		return deepSearchResultMsg{query: query, matches: matches}
 	}
 }
 
@@ -473,6 +527,12 @@ func findJSONL(cfg *config.Config, cwd, sessionID string) string {
 		return ""
 	}
 	return path
+}
+
+// deepSearchResultMsg carries results from async JSONL scanning.
+type deepSearchResultMsg struct {
+	query   string
+	matches []int
 }
 
 // --- Commands ---
