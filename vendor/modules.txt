@@ -75,7 +75,6 @@ github.com/muesli/termenv
 github.com/rivo/uniseg
 # github.com/sahilm/fuzzy v0.1.1
 ## explicit
-github.com/sahilm/fuzzy
 # github.com/spf13/cobra v1.10.2
 ## explicit; go 1.15
 github.com/spf13/cobra

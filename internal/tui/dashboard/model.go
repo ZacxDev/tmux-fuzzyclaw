@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/sahilm/fuzzy"
 
 	"github.com/zachatrocern/tmux-fuzzyclaw/internal/claude"
 	"github.com/zachatrocern/tmux-fuzzyclaw/internal/config"
@@ -231,9 +230,41 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 		m.applyFilter()
 
 	case "enter":
+		// Select current entry and switch
+		if entry := m.currentEntry(); entry != nil {
+			return m, tea.Sequence(
+				func() tea.Msg {
+					_ = tmux.SwitchClient(entry.Window.Target)
+					return nil
+				},
+				tea.Quit,
+			)
+		}
 		m.searching = false
 		m.searchInput.Blur()
-		// Keep filter active
+
+	case "up", "ctrl+p", "ctrl+k":
+		m.moveCursor(-1)
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+	case "down", "ctrl+n", "ctrl+j":
+		m.moveCursor(1)
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+	case "tab":
+		if len(m.filtered) > 0 {
+			idx := m.filtered[m.cursor]
+			if m.selected[idx] {
+				delete(m.selected, idx)
+			} else {
+				m.selected[idx] = true
+			}
+			m.moveCursor(1)
+		}
 
 	default:
 		var cmd tea.Cmd
@@ -348,20 +379,18 @@ func (m *Model) applyFilter() {
 		})
 		m.filtered = indices
 	} else {
-		// Fuzzy match against name + dir + summary + keywords
-		source := make(fuzzySource, len(m.entries))
+		// Case-insensitive substring match against visible fields
+		queryLower := strings.ToLower(m.searchQuery)
 		for i, e := range m.entries {
-			source[i] = strings.Join([]string{
+			searchable := strings.ToLower(strings.Join([]string{
 				e.CleanName(),
 				e.Window.Dir,
 				e.Window.FullCwd,
 				e.Summary,
-				e.Keywords,
-			}, " ")
-		}
-		matches := fuzzy.Find(m.searchQuery, source)
-		for _, match := range matches {
-			m.filtered = append(m.filtered, match.Index)
+			}, " "))
+			if strings.Contains(searchable, queryLower) {
+				m.filtered = append(m.filtered, i)
+			}
 		}
 	}
 
@@ -427,12 +456,6 @@ func findJSONL(cfg *config.Config, cwd, sessionID string) string {
 	}
 	return path
 }
-
-// fuzzySource implements fuzzy.Source.
-type fuzzySource []string
-
-func (s fuzzySource) String(i int) string { return s[i] }
-func (s fuzzySource) Len() int            { return len(s) }
 
 // --- Commands ---
 
