@@ -50,6 +50,35 @@ func SearchConversation(path, query string) ([]SearchResult, error) {
 	return results, nil
 }
 
+// CwdContains checks if any JSONL session for a cwd contains the query string.
+// Searches all sessions, not just the latest. Returns on first match.
+func CwdContains(claudeProjectsDir, cwd, query string) bool {
+	if query == "" {
+		return false
+	}
+	files, err := AllSessionFiles(claudeProjectsDir, cwd)
+	if err != nil {
+		return false
+	}
+	queryLower := strings.ToLower(query)
+	for _, f := range files {
+		messages, err := ParseJSONL(f)
+		if err != nil {
+			continue
+		}
+		for _, m := range messages {
+			if m.Type != TypeUser && m.Type != TypeAssistant {
+				continue
+			}
+			text := m.ExtractText()
+			if text != "" && strings.Contains(strings.ToLower(text), queryLower) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func extractContext(text, query string, contextLen int) string {
 	lower := strings.ToLower(text)
 	queryLower := strings.ToLower(query)

@@ -49,6 +49,42 @@ func LatestSessionFile(claudeProjectsDir, cwd string) (string, error) {
 	return jsonls[0].path, nil
 }
 
+// AllSessionFiles returns all JSONL files in a project dir, sorted newest first.
+func AllSessionFiles(claudeProjectsDir, cwd string) ([]string, error) {
+	pdir := ProjectDir(claudeProjectsDir, cwd)
+	entries, err := os.ReadDir(pdir)
+	if err != nil {
+		return nil, err
+	}
+
+	type fileInfo struct {
+		path    string
+		modTime int64
+	}
+	var jsonls []fileInfo
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		jsonls = append(jsonls, fileInfo{
+			path:    filepath.Join(pdir, e.Name()),
+			modTime: info.ModTime().UnixNano(),
+		})
+	}
+	sort.Slice(jsonls, func(i, j int) bool {
+		return jsonls[i].modTime > jsonls[j].modTime
+	})
+	paths := make([]string, len(jsonls))
+	for i, f := range jsonls {
+		paths[i] = f.path
+	}
+	return paths, nil
+}
+
 // SessionFile returns the path to a specific session's JSONL file.
 func SessionFile(claudeProjectsDir, cwd, sessionID string) (string, error) {
 	pdir := ProjectDir(claudeProjectsDir, cwd)

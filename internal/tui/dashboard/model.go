@@ -379,9 +379,13 @@ func (m *Model) applyFilter() {
 		})
 		m.filtered = indices
 	} else {
-		// Case-insensitive substring match against visible fields + conversation content
+		// Case-insensitive substring match against visible fields + cached keywords,
+		// then fall back to full JSONL search across all sessions per cwd.
 		queryLower := strings.ToLower(m.searchQuery)
+		cwdSearched := make(map[string]bool)  // cwd -> matched via JSONL?
+		cwdChecked := make(map[string]bool)   // cwd -> already checked JSONL?
 		for i, e := range m.entries {
+			// Fast path: match against cached fields
 			searchable := strings.ToLower(strings.Join([]string{
 				e.CleanName(),
 				e.Window.Dir,
@@ -390,6 +394,19 @@ func (m *Model) applyFilter() {
 				e.Keywords,
 			}, " "))
 			if strings.Contains(searchable, queryLower) {
+				m.filtered = append(m.filtered, i)
+				continue
+			}
+			// Slow path: search all JSONL files for this cwd (once per cwd)
+			cwd := e.Window.FullCwd
+			if cwd == "" {
+				continue
+			}
+			if !cwdChecked[cwd] {
+				cwdChecked[cwd] = true
+				cwdSearched[cwd] = claude.CwdContains(m.cfg.ClaudeProjectDir, cwd, m.searchQuery)
+			}
+			if cwdSearched[cwd] {
 				m.filtered = append(m.filtered, i)
 			}
 		}
