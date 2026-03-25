@@ -379,7 +379,7 @@ func (m *Model) applyFilter() {
 		})
 		m.filtered = indices
 	} else {
-		// Case-insensitive substring match against visible fields
+		// Case-insensitive substring match against visible fields + conversation content
 		queryLower := strings.ToLower(m.searchQuery)
 		for i, e := range m.entries {
 			searchable := strings.ToLower(strings.Join([]string{
@@ -387,6 +387,7 @@ func (m *Model) applyFilter() {
 				e.Window.Dir,
 				e.Window.FullCwd,
 				e.Summary,
+				e.Keywords,
 			}, " "))
 			if strings.Contains(searchable, queryLower) {
 				m.filtered = append(m.filtered, i)
