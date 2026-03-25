@@ -52,18 +52,59 @@ func SearchConversation(path, query string) ([]SearchResult, error) {
 }
 
 // CwdContains checks if any JSONL session for a cwd contains the query string.
-// Uses ripgrep for speed, falling back to Go if rg is not available.
+// Uses ripgrep for speed.
 func CwdContains(claudeProjectsDir, cwd, query string) bool {
 	if query == "" {
 		return false
 	}
 	pdir := ProjectDir(claudeProjectsDir, cwd)
-	// Use ripgrep: case-insensitive, just check for any match, limit to 1
 	cmd := exec.Command("rg", "-i", "-l", "--max-count=1", "--glob=*.jsonl", query, pdir)
 	if err := cmd.Run(); err == nil {
-		return true // exit 0 = match found
+		return true
 	}
-	return false // exit 1 = no match (or rg not found)
+	return false
+}
+
+// BatchCwdSearch runs a single ripgrep across all given cwd project dirs.
+// Returns the set of cwds that contain matches. Single rg call = ~66ms for 1.2GB.
+func BatchCwdSearch(claudeProjectsDir, query string, cwds []string) map[string]bool {
+	result := make(map[string]bool)
+	if query == "" || len(cwds) == 0 {
+		return result
+	}
+
+	// Build list of existing project dirs and map back to cwds
+	var dirs []string
+	dirToCwd := make(map[string]string)
+	for _, cwd := range cwds {
+		pdir := ProjectDir(claudeProjectsDir, cwd)
+		dirToCwd[pdir] = cwd
+		dirs = append(dirs, pdir)
+	}
+
+	// Single rg call across all dirs: returns matching file paths
+	args := []string{"-i", "-l", "--max-count=1", "--glob=*.jsonl", query}
+	args = append(args, dirs...)
+	cmd := exec.Command("rg", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return result // no matches or rg error
+	}
+
+	// Map matching file paths back to cwds
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		// Find which project dir this file belongs to
+		for pdir, cwd := range dirToCwd {
+			if strings.HasPrefix(line, pdir) {
+				result[cwd] = true
+				break
+			}
+		}
+	}
+	return result
 }
 
 func extractContext(text, query string, contextLen int) string {

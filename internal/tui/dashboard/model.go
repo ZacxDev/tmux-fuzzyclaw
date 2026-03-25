@@ -442,7 +442,7 @@ func (m *Model) inFiltered(idx int) bool {
 	return false
 }
 
-// deepSearch launches an async ripgrep scan across all JSONL files per cwd.
+// deepSearch launches a single async ripgrep scan across all cwds at once.
 func (m *Model) deepSearch() tea.Cmd {
 	query := m.searchQuery
 	if query == "" {
@@ -451,19 +451,22 @@ func (m *Model) deepSearch() tea.Cmd {
 	entries := m.entries
 	cfg := m.cfg
 	return func() tea.Msg {
-		cwdChecked := make(map[string]bool)
-		cwdMatched := make(map[string]bool)
+		// Collect unique cwds
+		cwdSet := make(map[string]bool)
+		var cwds []string
+		for _, e := range entries {
+			cwd := e.Window.FullCwd
+			if cwd != "" && !cwdSet[cwd] {
+				cwdSet[cwd] = true
+				cwds = append(cwds, cwd)
+			}
+		}
+		// Single rg call across all cwds
+		matched := claude.BatchCwdSearch(cfg.ClaudeProjectDir, query, cwds)
+		// Map back to entry indices
 		var matches []int
 		for i, e := range entries {
-			cwd := e.Window.FullCwd
-			if cwd == "" {
-				continue
-			}
-			if !cwdChecked[cwd] {
-				cwdChecked[cwd] = true
-				cwdMatched[cwd] = claude.CwdContains(cfg.ClaudeProjectDir, cwd, query)
-			}
-			if cwdMatched[cwd] {
+			if matched[e.Window.FullCwd] {
 				matches = append(matches, i)
 			}
 		}
