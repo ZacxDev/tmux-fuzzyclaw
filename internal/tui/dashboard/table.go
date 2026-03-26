@@ -125,27 +125,21 @@ func (m Model) formatRow(entryIdx, cursorPos int, now time.Time, width int) stri
 	}
 }
 
+// visibleRange returns the range of filtered indices to render.
+// Uses the pre-computed scrollOffset for stable edge-based scrolling.
 func (m Model) visibleRange(height int) (int, int) {
 	total := len(m.filtered)
 	if total <= height {
 		return 0, total
 	}
-
-	// Keep cursor in middle of visible range
-	half := height / 2
-	start := m.cursor - half
+	start := m.scrollOffset
+	if start > total-height {
+		start = total - height
+	}
 	if start < 0 {
 		start = 0
 	}
-	end := start + height
-	if end > total {
-		end = total
-		start = end - height
-		if start < 0 {
-			start = 0
-		}
-	}
-	return start, end
+	return start, start + height
 }
 
 func isClaudeRunning(e *tui.WindowEntry) bool {

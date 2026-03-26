@@ -43,6 +43,9 @@ type Model struct {
 	previewTarget  string // window ID currently previewed
 	searchResults  []claude.SearchResult
 
+	// Scroll
+	scrollOffset int // first visible row index
+
 	// State
 	ready     bool
 	err       error
@@ -178,6 +181,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	case "g", "home":
 		m.cursor = 0
+		m.scrollOffset = 0
 		if cmd := m.loadPreview(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -186,6 +190,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		if len(m.filtered) > 0 {
 			m.cursor = len(m.filtered) - 1
 		}
+		m.ensureCursorVisible()
 		if cmd := m.loadPreview(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -371,6 +376,34 @@ func (m *Model) moveCursor(delta int) {
 	if m.cursor >= len(m.filtered) {
 		m.cursor = len(m.filtered) - 1
 	}
+	m.ensureCursorVisible()
+}
+
+// ensureCursorVisible adjusts scrollOffset so the cursor is within the viewport.
+// Called after any cursor or filter change. Uses contentHeight estimate since
+// exact height isn't known until View(), but this is close enough.
+func (m *Model) ensureCursorVisible() {
+	// Estimate visible height (same logic as View)
+	height := m.height - 2
+	if m.searching {
+		height--
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	// Scroll up if cursor above viewport
+	if m.cursor < m.scrollOffset {
+		m.scrollOffset = m.cursor
+	}
+	// Scroll down if cursor below viewport
+	if m.cursor >= m.scrollOffset+height {
+		m.scrollOffset = m.cursor - height + 1
+	}
+	// Clamp
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
 }
 
 func (m *Model) currentEntry() *tui.WindowEntry {
@@ -436,6 +469,7 @@ func (m *Model) applyFilter() {
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(0, len(m.filtered)-1)
 	}
+	m.ensureCursorVisible()
 }
 
 func (m *Model) inFiltered(idx int) bool {
