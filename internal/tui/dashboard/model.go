@@ -148,6 +148,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.deepQuery != newQuery {
 				m.deepMatchCwds = nil
 			}
+			m.cursor = 0
+			m.scrollOffset = 0
 			m.applyFilter()
 			// Kick off async deep search via ripgrep
 			if cmd := m.deepSearch(); cmd != nil {
@@ -256,6 +258,8 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 		m.searchResults = nil
 		m.deepMatchCwds = nil
 		m.deepQuery = ""
+		m.cursor = 0
+		m.scrollOffset = 0
 		m.applyFilter()
 
 	case "enter":
@@ -307,6 +311,8 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 			if m.deepQuery != newQuery {
 				m.deepMatchCwds = nil
 			}
+			m.cursor = 0
+			m.scrollOffset = 0
 			m.applyFilter()
 			if cmd := m.deepSearch(); cmd != nil {
 				cmds = append(cmds, cmd)
