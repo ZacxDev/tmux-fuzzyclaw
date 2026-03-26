@@ -33,9 +33,9 @@ type Model struct {
 	searchQuery string
 	searching   bool
 
-	// Deep search
-	deepMatches    []int  // indices matched by async JSONL scan
-	deepQuery      string // query that produced deepMatches
+	// Deep search — stores matched CWDs (not indices) so results survive entry refreshes
+	deepMatchCwds  map[string]bool
+	deepQuery      string // query that produced deepMatchCwds
 
 	// Preview
 	previewPrompts []string
@@ -113,7 +113,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case deepSearchResultMsg:
 		if msg.query == m.searchQuery {
-			m.deepMatches = msg.matches
+			m.deepMatchCwds = msg.matchedCwds
 			m.deepQuery = msg.query
 			m.applyFilter()
 			if cmd := m.loadPreview(); cmd != nil {
@@ -143,7 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchQuery = newQuery
 			// Clear stale deep results if query changed
 			if m.deepQuery != newQuery {
-				m.deepMatches = nil
+				m.deepMatchCwds = nil
 			}
 			m.applyFilter()
 			// Kick off async deep search via ripgrep
@@ -249,7 +249,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 		m.searchQuery = ""
 		m.searchInput.SetValue("")
 		m.searchResults = nil
-		m.deepMatches = nil
+		m.deepMatchCwds = nil
 		m.deepQuery = ""
 		m.applyFilter()
 
@@ -300,7 +300,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 		if newQuery != m.searchQuery {
 			m.searchQuery = newQuery
 			if m.deepQuery != newQuery {
-				m.deepMatches = nil
+				m.deepMatchCwds = nil
 			}
 			m.applyFilter()
 			if cmd := m.deepSearch(); cmd != nil {
@@ -423,10 +423,12 @@ func (m *Model) applyFilter() {
 				m.filtered = append(m.filtered, i)
 			}
 		}
-		// Also include any entries from a prior deep search
-		for _, idx := range m.deepMatches {
-			if !m.inFiltered(idx) {
-				m.filtered = append(m.filtered, idx)
+		// Also include entries whose cwd matched in the async JSONL deep search
+		if len(m.deepMatchCwds) > 0 {
+			for i, e := range m.entries {
+				if m.deepMatchCwds[e.Window.FullCwd] && !m.inFiltered(i) {
+					m.filtered = append(m.filtered, i)
+				}
 			}
 		}
 	}
@@ -464,16 +466,9 @@ func (m *Model) deepSearch() tea.Cmd {
 				cwds = append(cwds, cwd)
 			}
 		}
-		// Single rg call across all cwds
+		// Single rg call across all cwds — returns matched CWDs (not indices)
 		matched := claude.BatchCwdSearch(cfg.ClaudeProjectDir, query, cwds)
-		// Map back to entry indices
-		var matches []int
-		for i, e := range entries {
-			if matched[e.Window.FullCwd] {
-				matches = append(matches, i)
-			}
-		}
-		return deepSearchResultMsg{query: query, matches: matches}
+		return deepSearchResultMsg{query: query, matchedCwds: matched}
 	}
 }
 
@@ -537,8 +532,8 @@ func findJSONL(cfg *config.Config, cwd, sessionID string) string {
 
 // deepSearchResultMsg carries results from async JSONL scanning.
 type deepSearchResultMsg struct {
-	query   string
-	matches []int
+	query      string
+	matchedCwds map[string]bool
 }
 
 // --- Commands ---
