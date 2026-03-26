@@ -353,7 +353,7 @@ func (m Model) View() string {
 	// Preview panel
 	var content string
 	if previewWidth > 0 {
-		preview := m.renderPreview(previewWidth, contentHeight+1)
+		preview := m.renderPreview(previewWidth, contentHeight-2) // -2 for border lines
 		content = lipgloss.JoinHorizontal(lipgloss.Top, table, " ", preview)
 	} else {
 		content = table
