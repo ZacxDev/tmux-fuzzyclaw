@@ -74,6 +74,13 @@ func (m Model) renderPreview(width, height int) string {
 
 	content := strings.Join(sections, "\n")
 
+	// Truncate to height — lipgloss Height() only pads, it doesn't clip overflow
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	content = strings.Join(lines, "\n")
+
 	return styles.PreviewBorder.Width(width - 2).Height(height).Render(content)
 }
 
