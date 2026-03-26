@@ -328,9 +328,9 @@ func (m Model) View() string {
 		tableWidth = m.width - previewWidth - 1
 	}
 
-	contentHeight := m.height - 3 // header + status bar + search bar
+	contentHeight := m.height - 2 // header + status bar
 	if m.searching {
-		contentHeight--
+		contentHeight-- // search bar
 	}
 
 	// Header
