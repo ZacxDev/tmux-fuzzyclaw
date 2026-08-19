@@ -9,16 +9,17 @@ import (
 
 // TaskState matches the existing JSON format written by task-hook.sh.
 type TaskState struct {
-	Task          string `json:"task"`
-	WindowID      string `json:"window_id"`
-	TmuxSession   string `json:"tmux_session"`
-	WindowIndex   int    `json:"window_index"`
-	Status        string `json:"status"`
-	Cwd           string `json:"cwd"`
-	ClaudeSession string `json:"claude_session"`
-	Started       string `json:"started"`
-	LastActivity  string `json:"last_activity"`
-	Summary       string `json:"summary"`
+	Task           string `json:"task"`
+	WindowID       string `json:"window_id"`
+	TmuxSession    string `json:"tmux_session"`
+	WindowIndex    int    `json:"window_index"`
+	Status         string `json:"status"`
+	Cwd            string `json:"cwd"`
+	ClaudeSession  string `json:"claude_session"`
+	Started        string `json:"started"`
+	LastActivity   string `json:"last_activity"`
+	Summary        string `json:"summary"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
 }
 
 // ReadTask reads a task state file for a given window ID.

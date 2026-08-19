@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "sessionId": "aaa-111",
+      "fullPath": "/tmp/test/aaa-111.jsonl",
+      "fileMtime": 1700000003000,
+      "firstPrompt": "implement login form",
+      "summary": "Built login form with validation",
+      "messageCount": 15,
+      "created": "2026-01-01T10:00:00.000Z",
+      "modified": "2026-01-03T12:00:00.000Z",
+      "gitBranch": "feature/auth",
+      "projectPath": "/tmp/test-project",
+      "isSidechain": false
+    },
+    {
+      "sessionId": "bbb-222",
+      "fullPath": "/tmp/test/bbb-222.jsonl",
+      "fileMtime": 1700000002000,
+      "firstPrompt": "fix bug in parser",
+      "messageCount": 5,
+      "created": "2026-01-02T08:00:00.000Z",
+      "modified": "2026-01-02T09:00:00.000Z",
+      "gitBranch": "main",
+      "projectPath": "/tmp/test-project",
+      "isSidechain": false
+    },
+    {
+      "sessionId": "ccc-333",
+      "fullPath": "/tmp/test/ccc-333.jsonl",
+      "fileMtime": 1700000004000,
+      "firstPrompt": "sidechain task",
+      "summary": "Sidechain summary",
+      "messageCount": 3,
+      "created": "2026-01-04T10:00:00.000Z",
+      "modified": "2026-01-04T15:00:00.000Z",
+      "gitBranch": "main",
+      "projectPath": "/tmp/test-project",
+      "isSidechain": true
+    }
+  ]
+}

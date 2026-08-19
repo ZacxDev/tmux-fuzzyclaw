@@ -9,39 +9,56 @@ import (
 
 // WindowEntry is the merged view of a window for dashboard display.
 type WindowEntry struct {
-	Window   tmux.Window
-	Task     *TaskSnapshot
-	Activity time.Time
-	Summary  string
-	Keywords string
+	Window       tmux.Window
+	Task         *TaskSnapshot
+	Activity     time.Time
+	LastMessage  time.Time // last conversation message (from sessions-index Modified)
+	Summary      string
+	Keywords     string
+	FirstPrompt  string
+	GitBranch    string
+	MessageCount int
+	SessionID    string
+	// Telemetry from statusline
+	Model        string
+	CostUSD      float64
+	ContextPct   *int // nil = no data
+	LinesAdded   int
+	LinesRemoved int
 }
 
 // TaskSnapshot holds task state data for display.
 type TaskSnapshot struct {
-	Task          string
-	Status        string
-	Cwd           string
-	ClaudeSession string
-	Started       string
-	LastActivity  string
-	Summary       string
+	Task           string
+	Status         string
+	Cwd            string
+	ClaudeSession  string
+	Started        string
+	LastActivity   string
+	Summary        string
+	TranscriptPath string
 }
 
-// StatusIndicator returns the display indicator for this entry.
+// StatusIndicator returns the display indicator for this entry, derived from
+// the JSON task state (the single source of truth) rather than the window name,
+// which is now left to tmux automatic-rename so tabs track cwd.
 func (e *WindowEntry) StatusIndicator() string {
-	name := e.Window.WindowName
-	switch {
-	case len(name) > 2 && name[:len("🔄")] == "🔄":
-		return "🔄"
-	case len(name) > 2 && name[:len("⏸")] == "⏸":
-		return "⏸"
-	case len(name) > 2 && name[:len("✅")] == "✅":
-		return "✅"
-	case isClaudeCommand(e.Window.Command):
-		return "●"
-	default:
-		return " "
+	if e.Task != nil {
+		switch e.Task.Status {
+		case "running":
+			return "🔄"
+		case "paused":
+			return "⏸"
+		case "waiting":
+			return "●"
+		case "done":
+			return "✅"
+		}
 	}
+	if isClaudeCommand(e.Window.Command) {
+		return "●"
+	}
+	return " "
 }
 
 // CleanName returns the window name with status emoji prefix stripped.
@@ -63,6 +80,30 @@ func (e *WindowEntry) CleanName() string {
 		name = ""
 	}
 	return name
+}
+
+// MsgAgeSeconds returns seconds since last conversation message.
+// Falls back to IdleSeconds if no message timestamp available.
+func (e *WindowEntry) MsgAgeSeconds(now time.Time) int {
+	if !e.LastMessage.IsZero() {
+		return int(now.Sub(e.LastMessage).Seconds())
+	}
+	return e.IdleSeconds(now)
+}
+
+// MsgAgeString returns a human-readable message age string.
+func (e *WindowEntry) MsgAgeString(now time.Time) string {
+	secs := e.MsgAgeSeconds(now)
+	switch {
+	case secs < 60:
+		return itoa(secs) + "s"
+	case secs < 3600:
+		return itoa(secs/60) + "m"
+	case secs < 86400:
+		return itoa(secs/3600) + "h"
+	default:
+		return itoa(secs/86400) + "d"
+	}
 }
 
 // IdleSeconds returns how many seconds since last activity.

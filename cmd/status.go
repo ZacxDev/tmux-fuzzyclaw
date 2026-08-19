@@ -33,11 +33,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	stale := 0
 
 	for _, w := range windows {
-		name := w.WindowName
+		task, terr := state.ReadTask(cfg.StateDir, w.WindowID)
 		switch {
-		case strings.HasPrefix(name, "🔄 ") || isClaudeCmd(w.Command):
+		case terr == nil && (task.Status == "running" || task.Status == "waiting"):
 			active++
-		case strings.HasPrefix(name, "⏸ "):
+		case terr == nil && task.Status == "paused":
 			// Check if stale
 			if act, err := state.ReadActivity(cfg.ActivityDir, w.WindowID); err == nil {
 				if now.Sub(act).Hours() > 24 {
@@ -46,6 +46,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				}
 			}
 			paused++
+		case terr != nil && isClaudeCmd(w.Command):
+			// Live claude process with no task state yet.
+			active++
 		}
 	}
 

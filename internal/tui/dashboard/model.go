@@ -1,6 +1,9 @@
 package dashboard
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -14,7 +17,21 @@ import (
 	"github.com/zachatrocern/tmux-fuzzyclaw/internal/state"
 	"github.com/zachatrocern/tmux-fuzzyclaw/internal/tmux"
 	"github.com/zachatrocern/tmux-fuzzyclaw/internal/tui"
+	"github.com/zachatrocern/tmux-fuzzyclaw/internal/tui/styles"
 )
+
+// projectEntry is an aggregated project row for the project-level view.
+type projectEntry struct {
+	cwd          string // full cwd path
+	name         string // basename for display
+	sessionCount int
+	linesAdded   int
+	running      int
+	waiting      int
+	paused       int
+	done         int
+	bestPriority int // lowest statusPriority = most urgent
+}
 
 // Model is the Bubble Tea model for the dashboard view.
 type Model struct {
@@ -23,15 +40,23 @@ type Model struct {
 	height int
 
 	// Data
-	entries  []tui.WindowEntry
-	filtered []int // indices into entries after search filter
-	cursor   int
-	selected map[int]bool // multi-select set (indices into filtered)
+	entries   []tui.WindowEntry
+	filtered  []int // indices into entries after search filter
+	cursor    int
+	selected  map[int]bool // multi-select set (indices into filtered)
+
+	// Two-level navigation
+	viewMode        string          // "projects" or "sessions"
+	selectedProject string          // cwd of drilled-in project ("" = all)
+	projects        []projectEntry  // aggregated project rows
 
 	// Search
 	searchInput textinput.Model
 	searchQuery string
 	searching   bool
+
+	// Status filter — "" means show all
+	statusFilter string // "running", "paused", "waiting", "done", ""
 
 	// Deep search — stores matched CWDs (not indices) so results survive entry refreshes
 	deepMatchCwds  map[string]bool
@@ -61,9 +86,10 @@ func New(cfg *config.Config) Model {
 	ti.Width = 40
 
 	return Model{
-		cfg:      cfg,
-		selected: make(map[int]bool),
+		cfg:         cfg,
+		selected:    make(map[int]bool),
 		searchInput: ti,
+		viewMode:    "sessions",
 	}
 }
 
@@ -166,7 +192,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "esc", "ctrl+c":
+	case "q", "ctrl+c":
+		return m, tea.Quit
+
+	case "esc":
+		if m.viewMode == "sessions" && m.selectedProject != "" {
+			// Go back to project view
+			m.viewMode = "projects"
+			m.selectedProject = ""
+			m.cursor = 0
+			m.scrollOffset = 0
+			m.applyFilter()
+			if cmd := m.loadPreview(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
 		return m, tea.Quit
 
 	case "j", "down":
@@ -198,7 +239,20 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		}
 
 	case "enter":
-		if entry := m.currentEntry(); entry != nil {
+		if m.viewMode == "projects" {
+			// Drill into selected project
+			if m.cursor >= 0 && m.cursor < len(m.projects) {
+				m.selectedProject = m.projects[m.cursor].cwd
+				m.viewMode = "sessions"
+				m.cursor = 0
+				m.scrollOffset = 0
+				m.applyFilter()
+				if cmd := m.loadPreview(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+		} else if entry := m.currentEntry(); entry != nil {
+			// Switch to selected window
 			return m, tea.Sequence(
 				func() tea.Msg {
 					_ = tmux.SwitchClient(entry.Window.Target)
@@ -243,6 +297,46 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		m.searching = true
 		m.searchInput.Focus()
 		cmds = append(cmds, m.searchInput.Focus())
+
+	case "1": // Filter: running
+		m.toggleStatusFilter("running")
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "2": // Filter: paused
+		m.toggleStatusFilter("paused")
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "3": // Filter: waiting
+		m.toggleStatusFilter("waiting")
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "4": // Filter: done
+		m.toggleStatusFilter("done")
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "0": // Clear filter
+		m.toggleStatusFilter("")
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case "p": // Toggle between project and session view
+		if m.viewMode == "projects" {
+			m.viewMode = "sessions"
+			m.selectedProject = ""
+		} else {
+			m.viewMode = "projects"
+			m.selectedProject = ""
+		}
+		m.cursor = 0
+		m.scrollOffset = 0
+		m.applyFilter()
+		if cmd := m.loadPreview(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -343,9 +437,18 @@ func (m Model) View() string {
 	if m.searching {
 		contentHeight-- // search bar
 	}
+	if m.viewMode == "sessions" && m.selectedProject != "" {
+		contentHeight-- // breadcrumb line
+	}
 
 	// Header
 	header := m.renderHeader(tableWidth)
+
+	// Breadcrumb when drilled into a project
+	if m.viewMode == "sessions" && m.selectedProject != "" {
+		crumb := styles.SectionStyle.Render(fmt.Sprintf("── %s ──", filepath.Base(m.selectedProject)))
+		header = header + "\n" + crumb
+	}
 
 	// Table
 	table := m.renderTable(tableWidth, contentHeight)
@@ -372,15 +475,19 @@ func (m Model) View() string {
 }
 
 func (m *Model) moveCursor(delta int) {
-	if len(m.filtered) == 0 {
+	listLen := len(m.filtered)
+	if m.viewMode == "projects" {
+		listLen = len(m.projects)
+	}
+	if listLen == 0 {
 		return
 	}
 	m.cursor += delta
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	if m.cursor >= len(m.filtered) {
-		m.cursor = len(m.filtered) - 1
+	if m.cursor >= listLen {
+		m.cursor = listLen - 1
 	}
 	m.ensureCursorVisible()
 }
@@ -429,40 +536,158 @@ func (m *Model) selectedTargets() []string {
 	return targets
 }
 
+// statusPriority returns sort priority (lower = more urgent).
+func statusPriority(status string) int {
+	switch status {
+	case "waiting":
+		return 0
+	case "paused":
+		return 1
+	case "running":
+		return 2
+	case "done":
+		return 3
+	default:
+		return 4
+	}
+}
+
+// buildProjects aggregates entries into project-level rows.
+func (m *Model) buildProjects() {
+	seen := make(map[string]*projectEntry)
+	m.projects = m.projects[:0]
+	for i := range m.entries {
+		e := &m.entries[i]
+		cwd := e.Window.FullCwd
+		if cwd == "" {
+			cwd = e.Window.Dir
+		}
+		p, ok := seen[cwd]
+		if !ok {
+			p = &projectEntry{
+				cwd:          cwd,
+				name:         filepath.Base(cwd),
+				bestPriority: 99,
+			}
+			seen[cwd] = p
+			m.projects = append(m.projects, *p)
+		}
+		idx := -1
+		for j := range m.projects {
+			if m.projects[j].cwd == cwd {
+				idx = j
+				break
+			}
+		}
+		if idx < 0 {
+			continue
+		}
+		m.projects[idx].sessionCount++
+		m.projects[idx].linesAdded += e.LinesAdded
+		switch m.entryStatus(e) {
+		case "running":
+			m.projects[idx].running++
+		case "waiting":
+			m.projects[idx].waiting++
+		case "paused":
+			m.projects[idx].paused++
+		case "done":
+			m.projects[idx].done++
+		}
+		pri := statusPriority(m.entryStatus(e))
+		if pri < m.projects[idx].bestPriority {
+			m.projects[idx].bestPriority = pri
+		}
+	}
+	// Sort by attention priority, then name
+	sort.Slice(m.projects, func(a, b int) bool {
+		if m.projects[a].bestPriority != m.projects[b].bestPriority {
+			return m.projects[a].bestPriority < m.projects[b].bestPriority
+		}
+		return m.projects[a].name < m.projects[b].name
+	})
+}
+
 func (m *Model) applyFilter() {
 	m.filtered = m.filtered[:0]
-	if m.searchQuery == "" {
-		// No filter — sort by idle time (ascending = most recent first)
-		indices := make([]int, len(m.entries))
-		for i := range indices {
-			indices[i] = i
+
+	if m.viewMode == "projects" {
+		// Project view — filtered is not used for rendering, buildProjects handles it
+		m.buildProjects()
+		if m.cursor >= len(m.projects) {
+			m.cursor = max(0, len(m.projects)-1)
 		}
+		m.ensureCursorVisible()
+		return
+	}
+
+	// Session view — filter entries to selectedProject (or all if empty)
+	if m.searchQuery == "" {
+		indices := make([]int, 0, len(m.entries))
+		for i := range m.entries {
+			if m.selectedProject != "" {
+				cwd := m.entries[i].Window.FullCwd
+				if cwd == "" {
+					cwd = m.entries[i].Window.Dir
+				}
+				if cwd != m.selectedProject {
+					continue
+				}
+			}
+			indices = append(indices, i)
+		}
+
+		// Attention-priority sort
 		now := time.Now()
 		sort.Slice(indices, func(a, b int) bool {
-			idleA := m.entries[indices[a]].IdleSeconds(now)
-			idleB := m.entries[indices[b]].IdleSeconds(now)
-			if m.cfg.Dashboard.SortAscending {
-				return idleA < idleB
+			ea := &m.entries[indices[a]]
+			eb := &m.entries[indices[b]]
+			pa := statusPriority(m.entryStatus(ea))
+			pb := statusPriority(m.entryStatus(eb))
+			if pa != pb {
+				return pa < pb
 			}
-			return idleA > idleB
+			return ea.MsgAgeSeconds(now) < eb.MsgAgeSeconds(now)
 		})
+
+		// Apply status filter if active
+		if m.statusFilter != "" {
+			var matched []int
+			for _, idx := range indices {
+				if m.entryStatus(&m.entries[idx]) == m.statusFilter {
+					matched = append(matched, idx)
+				}
+			}
+			indices = matched
+		}
+
 		m.filtered = indices
 	} else {
-		// Fast: substring match against cached fields only
+		// Search: substring match against cached fields
 		queryLower := strings.ToLower(m.searchQuery)
 		for i, e := range m.entries {
+			if m.selectedProject != "" {
+				cwd := e.Window.FullCwd
+				if cwd == "" {
+					cwd = e.Window.Dir
+				}
+				if cwd != m.selectedProject {
+					continue
+				}
+			}
 			searchable := strings.ToLower(strings.Join([]string{
 				e.CleanName(),
 				e.Window.Dir,
 				e.Window.FullCwd,
 				e.Summary,
 				e.Keywords,
+				e.FirstPrompt,
+				e.GitBranch,
 			}, " "))
 			if strings.Contains(searchable, queryLower) {
 				m.filtered = append(m.filtered, i)
 			}
 		}
-		// Also include entries whose cwd matched in the async JSONL deep search
 		if len(m.deepMatchCwds) > 0 {
 			for i, e := range m.entries {
 				if m.deepMatchCwds[e.Window.FullCwd] && !m.inFiltered(i) {
@@ -476,6 +701,28 @@ func (m *Model) applyFilter() {
 		m.cursor = max(0, len(m.filtered)-1)
 	}
 	m.ensureCursorVisible()
+}
+
+func (m *Model) toggleStatusFilter(status string) {
+	if m.statusFilter == status || status == "" {
+		m.statusFilter = ""
+	} else {
+		m.statusFilter = status
+	}
+	m.cursor = 0
+	m.scrollOffset = 0
+	m.applyFilter()
+}
+
+// entryStatus returns the effective status for filtering.
+func (m *Model) entryStatus(e *tui.WindowEntry) string {
+	if e.Task != nil && e.Task.Status != "" {
+		return e.Task.Status
+	}
+	if isClaudeRunning(e) {
+		return "running"
+	}
+	return ""
 }
 
 func (m *Model) inFiltered(idx int) bool {
@@ -526,15 +773,17 @@ func (m *Model) loadPreview() tea.Cmd {
 	cfg := m.cfg
 	cwd := entry.Window.FullCwd
 	sessionID := ""
+	transcriptPath := ""
 	if entry.Task != nil {
 		sessionID = entry.Task.ClaudeSession
+		transcriptPath = entry.Task.TranscriptPath
 	}
 	query := m.searchQuery
 
 	return func() tea.Msg {
 		if query != "" {
 			// Search mode
-			jsonlPath := findJSONL(cfg, cwd, sessionID)
+			jsonlPath := findJSONL(cfg, cwd, sessionID, transcriptPath)
 			if jsonlPath != "" {
 				results, _ := claude.SearchConversation(jsonlPath, query)
 				return tui.SearchResultsMsg{Results: results, Query: query}
@@ -543,7 +792,7 @@ func (m *Model) loadPreview() tea.Cmd {
 		}
 
 		// Default: load recent prompts
-		jsonlPath := findJSONL(cfg, cwd, sessionID)
+		jsonlPath := findJSONL(cfg, cwd, sessionID, transcriptPath)
 		if jsonlPath == "" {
 			return tui.ConversationLoadedMsg{WindowID: target}
 		}
@@ -557,7 +806,13 @@ func (m *Model) loadPreview() tea.Cmd {
 	}
 }
 
-func findJSONL(cfg *config.Config, cwd, sessionID string) string {
+func findJSONL(cfg *config.Config, cwd, sessionID, transcriptPath string) string {
+	// Use transcript path directly when available from hooks
+	if transcriptPath != "" {
+		if _, err := os.Stat(transcriptPath); err == nil {
+			return transcriptPath
+		}
+	}
 	if sessionID != "" {
 		if path, err := claude.SessionFile(cfg.ClaudeProjectDir, cwd, sessionID); err == nil {
 			return path
@@ -568,6 +823,13 @@ func findJSONL(cfg *config.Config, cwd, sessionID string) string {
 		return ""
 	}
 	return path
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }
 
 // deepSearchResultMsg carries results from async JSONL scanning.
@@ -586,11 +848,13 @@ func fetchWindows(cfg *config.Config) tea.Cmd {
 		}
 
 		tasks, _ := state.ReadAllTasks(cfg.StateDir)
+		telemetry := state.ReadTelemetryByCwd(cfg.ActivityDir)
 
 		// Build keyword/summary cache per cwd
 		type cwdCache struct {
-			keywords string
-			summary  string
+			keywords   string
+			summary    string
+			indexEntry *claude.IndexEntry
 		}
 		cwdCaches := make(map[string]*cwdCache)
 
@@ -602,13 +866,14 @@ func fetchWindows(cfg *config.Config) tea.Cmd {
 			cleanID := w.CleanID()
 			if t, ok := tasks[cleanID]; ok {
 				entry.Task = &tui.TaskSnapshot{
-					Task:          t.Task,
-					Status:        t.Status,
-					Cwd:           t.Cwd,
-					ClaudeSession: t.ClaudeSession,
-					Started:       t.Started,
-					LastActivity:  t.LastActivity,
-					Summary:       t.Summary,
+					Task:           t.Task,
+					Status:         t.Status,
+					Cwd:            t.Cwd,
+					ClaudeSession:  t.ClaudeSession,
+					Started:        t.Started,
+					LastActivity:   t.LastActivity,
+					Summary:        t.Summary,
+					TranscriptPath: t.TranscriptPath,
 				}
 				entry.Summary = t.Summary
 			}
@@ -618,24 +883,60 @@ func fetchWindows(cfg *config.Config) tea.Cmd {
 				entry.Activity = act
 			}
 
-			// Keywords/summary from JSONL (cached per cwd)
+			// Telemetry from statusline
+			if t, ok := telemetry[w.FullCwd]; ok {
+				entry.Model = t.Model
+				entry.CostUSD = t.CostUSD
+				entry.ContextPct = t.ContextPct
+				entry.LinesAdded = t.LinesAdded
+				entry.LinesRemoved = t.LinesRemoved
+			}
+
+			// Keywords/summary: try sessions-index.json first (fast), fall back to JSONL
 			cwd := w.FullCwd
 			if cwd != "" {
 				cc, ok := cwdCaches[cwd]
 				if !ok {
 					cc = &cwdCache{}
-					jsonlPath, err := claude.LatestSessionFile(cfg.ClaudeProjectDir, cwd)
-					if err == nil {
-						cc.keywords = claude.ExtractKeywords(jsonlPath, 3000)
-						if entry.Summary == "" {
-							cc.summary = claude.ExtractSummary(jsonlPath, 80)
+					if ie, err := claude.LatestIndexEntry(cfg.ClaudeProjectDir, cwd); err == nil {
+						// Fast path: small JSON index
+						cc.keywords = ie.FirstPrompt
+						if ie.Summary != "" {
+							cc.summary = ie.Summary
+						} else {
+							cc.summary = truncateStr(ie.FirstPrompt, 80)
+						}
+						cc.indexEntry = ie
+					} else {
+						// Fallback: JSONL parsing (index doesn't exist)
+						jsonlPath, err := claude.LatestSessionFile(cfg.ClaudeProjectDir, cwd)
+						if err == nil {
+							cc.keywords = claude.ExtractKeywords(jsonlPath, 3000)
+							if entry.Summary == "" {
+								cc.summary = claude.ExtractSummary(jsonlPath, 80)
+							}
 						}
 					}
 					cwdCaches[cwd] = cc
 				}
 				entry.Keywords = cc.keywords
-				if entry.Summary == "" {
+				// Prefer sessions-index summary (curated) over task state summary (last_assistant_message)
+				if cc.summary != "" {
 					entry.Summary = cc.summary
+				}
+				if cc.indexEntry != nil {
+					entry.FirstPrompt = cc.indexEntry.FirstPrompt
+					entry.GitBranch = cc.indexEntry.GitBranch
+					entry.MessageCount = cc.indexEntry.MessageCount
+					entry.SessionID = cc.indexEntry.SessionID
+					// Only set LastMessage when this window has an active session (hook has fired)
+					if entry.Task != nil {
+						if t, err := time.Parse(time.RFC3339Nano, cc.indexEntry.Modified); err == nil {
+							entry.LastMessage = t
+						} else if t, err := time.Parse(time.RFC3339, cc.indexEntry.Modified); err == nil {
+							entry.LastMessage = t
+						}
+					}
 				}
 			}
 

@@ -22,8 +22,11 @@ var (
 // StatusColors maps task status indicators to colors.
 var StatusColors = map[string]lipgloss.Color{
 	"active":  ColorGreen,
+	"running": ColorGreen,
 	"paused":  ColorYellow,
 	"resumed": ColorAqua,
+	"waiting": ColorOrange,
+	"done":    ColorGray,
 	"stale":   ColorGray,
 	"bell":    ColorBrightRed,
 }
