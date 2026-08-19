@@ -10,20 +10,24 @@ import (
 func TestStatusIndicator(t *testing.T) {
 	tests := []struct {
 		name    string
-		winName string
+		status  string // task status; "" means no task state
 		command string
 		expect  string
 	}{
-		{"resumed", "🔄 auth", "", "🔄"},
-		{"paused", "⏸ auth", "", "⏸"},
-		{"done", "✅ auth", "", "✅"},
-		{"claude running", "project", "claude", "●"},
-		{"no status", "project", "zsh", " "},
+		{"running", "running", "", "🔄"},
+		{"paused", "paused", "", "⏸"},
+		{"waiting", "waiting", "", "●"},
+		{"done", "done", "", "✅"},
+		{"claude running, no task", "", "claude", "●"},
+		{"no status", "", "zsh", " "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := &WindowEntry{
-				Window: tmux.Window{WindowName: tt.winName, Command: tt.command},
+				Window: tmux.Window{Command: tt.command},
+			}
+			if tt.status != "" {
+				e.Task = &TaskSnapshot{Status: tt.status}
 			}
 			if got := e.StatusIndicator(); got != tt.expect {
 				t.Errorf("StatusIndicator() = %q, want %q", got, tt.expect)

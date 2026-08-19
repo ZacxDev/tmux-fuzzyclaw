@@ -12,7 +12,14 @@ import (
 )
 
 func (m Model) renderHeader(width int) string {
-	cols := fmt.Sprintf(" %-2s %-24s  %-20s  %5s  %s", "ST", "TASK", "DIR", "IDLE", "SUMMARY")
+	if m.viewMode == "projects" {
+		cols := fmt.Sprintf(" %-2s %-24s  %8s  %9s  %s", "ST", "PROJECT", "SESSIONS", "CHANGES", "STATUS")
+		if len(cols) > width {
+			cols = cols[:width]
+		}
+		return styles.HeaderStyle.Width(width).Render(cols)
+	}
+	cols := fmt.Sprintf(" %-2s %-24s  %-20s  %5s  %9s  %s", "ST", "TASK", "DIR", "MSG", "CHANGES", "PROMPT")
 	if len(cols) > width {
 		cols = cols[:width]
 	}
@@ -20,8 +27,107 @@ func (m Model) renderHeader(width int) string {
 }
 
 func (m Model) renderTable(width, height int) string {
+	if m.viewMode == "projects" {
+		return m.renderProjectTable(width, height)
+	}
+	return m.renderSessionTable(width, height)
+}
+
+func (m Model) renderProjectTable(width, height int) string {
+	if len(m.projects) == 0 {
+		return styles.DimStyle.Render("No projects found")
+	}
+
+	var lines []string
+	total := len(m.projects)
+	start := m.scrollOffset
+	if start > total-height {
+		start = total - height
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + height
+	if end > total {
+		end = total
+	}
+
+	for i := start; i < end; i++ {
+		p := &m.projects[i]
+		line := m.formatProjectRow(p, i, width)
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) formatProjectRow(p *projectEntry, cursorPos int, width int) string {
+	// Status indicator — most urgent status in the project
+	var st string
+	switch {
+	case p.waiting > 0:
+		st = "⚠"
+	case p.paused > 0:
+		st = "⏸"
+	case p.running > 0:
+		st = "🔄"
+	case p.done > 0:
+		st = "✅"
+	default:
+		st = " "
+	}
+
+	name := p.name
+	if len(name) > 24 {
+		name = name[:24]
+	}
+
+	sessions := fmt.Sprintf("%8d", p.sessionCount)
+
+	chgStr := fmt.Sprintf("%9s", "-")
+	if p.linesAdded > 0 {
+		chgStr = fmt.Sprintf("+%d", p.linesAdded)
+		if len(chgStr) < 9 {
+			chgStr = fmt.Sprintf("%9s", chgStr)
+		}
+		chgColor := styles.ColorGreen
+		if p.linesAdded > 500 {
+			chgColor = styles.ColorYellow
+		}
+		chgStr = lipgloss.NewStyle().Foreground(chgColor).Render(chgStr)
+	}
+
+	// Status breakdown
+	var statusParts []string
+	if p.running > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(styles.ColorGreen).Render(fmt.Sprintf("%d running", p.running)))
+	}
+	if p.waiting > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(styles.ColorOrange).Render(fmt.Sprintf("%d waiting", p.waiting)))
+	}
+	if p.paused > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("%d paused", p.paused))
+	}
+	if p.done > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(styles.ColorFgDim).Render(fmt.Sprintf("%d done", p.done)))
+	}
+	status := strings.Join(statusParts, ", ")
+
+	row := fmt.Sprintf(" %s %-24s  %s  %s  %s", st, name, sessions, chgStr, status)
+
+	if len(row) > width && width > 0 {
+		row = row[:width]
+	}
+
+	if cursorPos == m.cursor {
+		return styles.SelectedRowStyle.Width(width).Render(row)
+	}
+	return row
+}
+
+func (m Model) renderSessionTable(width, height int) string {
 	if len(m.filtered) == 0 {
-		msg := "No windows found"
+		msg := "No sessions found"
 		if m.searchQuery != "" {
 			msg = "No matches for: " + m.searchQuery
 		}
@@ -31,27 +137,7 @@ func (m Model) renderTable(width, height int) string {
 	now := time.Now()
 	var lines []string
 
-	// Determine visible range (scroll around cursor)
 	visibleStart, visibleEnd := m.visibleRange(height)
-
-	// Check if we should show the "WAITING FOR INPUT" section
-	if m.searchQuery == "" && m.cfg.Dashboard.ShowSections {
-		var bellEntries []int
-		for _, idx := range m.filtered {
-			e := &m.entries[idx]
-			if e.Window.BellFlag && isClaudeRunning(e) {
-				bellEntries = append(bellEntries, idx)
-			}
-		}
-		if len(bellEntries) > 0 {
-			lines = append(lines, styles.SectionStyle.Render("── WAITING FOR INPUT ──"))
-			for _, idx := range bellEntries {
-				line := m.formatRow(idx, -1, now, width)
-				lines = append(lines, line)
-			}
-			lines = append(lines, "")
-		}
-	}
 
 	for i := visibleStart; i < visibleEnd; i++ {
 		idx := m.filtered[i]
@@ -65,11 +151,17 @@ func (m Model) renderTable(width, height int) string {
 func (m Model) formatRow(entryIdx, cursorPos int, now time.Time, width int) string {
 	e := &m.entries[entryIdx]
 
-	// Status indicator
+	// Status indicator with context warning
 	st := e.StatusIndicator()
+	if e.ContextPct != nil && *e.ContextPct >= 80 {
+		st = lipgloss.NewStyle().Foreground(styles.ColorBrightRed).Render("⚠")
+	}
 
 	// Name (truncated to 24 chars)
 	name := e.CleanName()
+	if name == "" && e.FirstPrompt != "" {
+		name = e.FirstPrompt
+	}
 	if name == "" {
 		name = e.Window.Dir
 	}
@@ -83,25 +175,42 @@ func (m Model) formatRow(entryIdx, cursorPos int, now time.Time, width int) stri
 		dir = dir[:20]
 	}
 
-	// Idle time with color
-	idleSecs := e.IdleSeconds(now)
-	idleStr := e.IdleString(now)
-	idleColor := lipgloss.Color(m.cfg.Theme.IdleColorFor(idleSecs))
-	idleStyled := lipgloss.NewStyle().Foreground(idleColor).Render(fmt.Sprintf("%5s", idleStr))
+	// Message age with color
+	msgSecs := e.MsgAgeSeconds(now)
+	msgStr := e.MsgAgeString(now)
+	msgColor := lipgloss.Color(m.cfg.Theme.IdleColorFor(msgSecs))
+	msgStyled := lipgloss.NewStyle().Foreground(msgColor).Render(fmt.Sprintf("%5s", msgStr))
 
-	// Summary (truncated to 55 chars)
-	summary := e.Summary
-	if len(summary) > 55 {
-		summary = summary[:55]
+	// Lines changed (progress indicator)
+	chgStr := fmt.Sprintf("%9s", "-")
+	if e.LinesAdded > 0 || e.LinesRemoved > 0 {
+		chgStr = fmt.Sprintf("+%d/-%d", e.LinesAdded, e.LinesRemoved)
+		if len(chgStr) < 9 {
+			chgStr = fmt.Sprintf("%9s", chgStr)
+		}
+		chgColor := styles.ColorGreen
+		if e.LinesAdded+e.LinesRemoved > 500 {
+			chgColor = styles.ColorYellow
+		}
+		chgStr = lipgloss.NewStyle().Foreground(chgColor).Render(chgStr)
+	}
+
+	// Prompt (firstPrompt is the most useful — tells you what the session is FOR)
+	prompt := e.FirstPrompt
+	if prompt == "" {
+		prompt = e.Summary
+	}
+	if len(prompt) > 50 {
+		prompt = prompt[:50]
 	}
 
 	// Stale marker
 	stale := ""
-	if idleSecs > 86400 {
+	if msgSecs > 86400 {
 		stale = " 💀"
 	}
 
-	row := fmt.Sprintf(" %s %-24s  %-20s  %s  %s%s", st, name, dir, idleStyled, summary, stale)
+	row := fmt.Sprintf(" %s %-24s  %-20s  %s  %s  %s%s", st, name, dir, msgStyled, chgStr, prompt, stale)
 
 	// Truncate to width
 	// Note: this is approximate due to unicode widths, but good enough
